@@ -15,10 +15,12 @@ app.use(
 
 const PORT = process.env.PORT || 3000;
 
-const GHL_BASE_URL = "https://services.leadconnectorhq.com";
+const GHL_BASE_URL =
+  "https://services.leadconnectorhq.com";
 
 const CONFIG = {
-  token: process.env.GHL_PRIVATE_TOKEN,
+  token:
+    process.env.GHL_PRIVATE_TOKEN,
 
   locationId:
     process.env.GHL_LOCATION_ID ||
@@ -36,144 +38,118 @@ const CONFIG = {
     process.env.GHL_SERVICE_LOCATION_ID ||
     "69a9e70ec7aae1643cd3ecb6",
 
+  resourceId:
+    process.env.GHL_RESOURCE_ID ||
+    "6a835165bddbb5aee81480fd",
+
+  resourceCapacity:
+    Number(
+      process.env.RESOURCE_CAPACITY || 15
+    ),
+
   timezone:
     process.env.GHL_TIMEZONE ||
     "America/New_York",
 
-  capacity:
-    Number(process.env.RESOURCE_CAPACITY || 15),
-
   durationMinutes:
-    Number(process.env.SERVICE_DURATION_MINUTES || 30),
+    Number(
+      process.env.SERVICE_DURATION_MINUTES || 30
+    ),
 
   slotIntervalMinutes:
-    Number(process.env.SLOT_INTERVAL_MINUTES || 30),
+    Number(
+      process.env.SLOT_INTERVAL_MINUTES || 30
+    ),
 
   openHour:
-    Number(process.env.OPEN_HOUR || 9),
+    Number(process.env.OPEN_HOUR || 5),
 
   closeHour:
     Number(process.env.CLOSE_HOUR || 17)
 };
 
-const headers = () => ({
-  Authorization: `Bearer ${CONFIG.token}`,
-  Version: "v3",
-  Accept: "application/json",
-  "Content-Type": "application/json"
-});
+/*
+|--------------------------------------------------------------------------
+| GHL Headers
+|--------------------------------------------------------------------------
+*/
 
-function validateConfig() {
+function ghlHeaders() {
+  return {
+    Authorization:
+      `Bearer ${CONFIG.token}`,
+    Version: "v3",
+    Accept: "application/json",
+    "Content-Type": "application/json"
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| GHL Fetch Helper
+|--------------------------------------------------------------------------
+*/
+
+async function ghlFetch(
+  path,
+  options = {}
+) {
   if (!CONFIG.token) {
-    throw new Error("GHL_PRIVATE_TOKEN is missing");
+    throw new Error(
+      "GHL_PRIVATE_TOKEN is missing"
+    );
   }
-}
 
-function toDateTime(date, hour, minute) {
-  const hh = String(hour).padStart(2, "0");
-  const mm = String(minute).padStart(2, "0");
-
-  // We intentionally send local service time.
-  // GHL also receives the timezone separately.
-  return `${date}T${hh}:${mm}:00`;
-}
-
-function addMinutes(localDateTime, minutes) {
-  const date = new Date(`${localDateTime}Z`);
-
-  date.setUTCMinutes(date.getUTCMinutes() + minutes);
-
-  return date.toISOString().slice(0, 19);
-}
-
-function convertLocalTimeToTimestamp(dateString, timezone) {
-  /*
-    Native JS does not provide a perfect direct
-    "local time in timezone -> epoch" conversion.
-
-    We can safely create the boundaries through
-    Intl by calculating the timezone offset.
-  */
-
-  const temporaryUTC = new Date(`${dateString}Z`);
-
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
-
-  const parts = formatter.formatToParts(temporaryUTC);
-
-  const values = {};
-
-  for (const part of parts) {
-    if (part.type !== "literal") {
-      values[part.type] = part.value;
+  const response = await fetch(
+    `${GHL_BASE_URL}${path}`,
+    {
+      ...options,
+      headers: {
+        ...ghlHeaders(),
+        ...(options.headers || {})
+      }
     }
-  }
-
-  const formattedAsUTC = Date.UTC(
-    Number(values.year),
-    Number(values.month) - 1,
-    Number(values.day),
-    Number(values.hour),
-    Number(values.minute),
-    Number(values.second)
   );
 
-  const offset = formattedAsUTC - temporaryUTC.getTime();
+  const raw =
+    await response.text();
 
-  return temporaryUTC.getTime() - offset;
-}
-
-function overlaps(bookingStart, bookingEnd, slotStart, slotEnd) {
-  return bookingStart < slotEnd && bookingEnd > slotStart;
-}
-
-async function ghlFetch(path, options = {}) {
-  validateConfig();
-
-  const response = await fetch(`${GHL_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...headers(),
-      ...(options.headers || {})
-    }
-  });
-
-  const text = await response.text();
-
-  let data = null;
+  let data;
 
   try {
-    data = text ? JSON.parse(text) : {};
+    data =
+      raw
+        ? JSON.parse(raw)
+        : {};
   } catch {
     data = {
-      raw: text
+      raw
     };
   }
 
   if (!response.ok) {
-    console.error("GHL API Error", {
-      path,
-      status: response.status,
-      response: data
-    });
-
-    const error = new Error(
-      data?.message ||
-      data?.error ||
-      `GHL API request failed with ${response.status}`
+    console.error(
+      "GHL API Error",
+      {
+        path,
+        status:
+          response.status,
+        data
+      }
     );
 
-    error.status = response.status;
-    error.details = data;
+    const error =
+      new Error(
+        data?.message ||
+        data?.error ||
+        `GHL API error ${response.status}`
+      );
+
+    error.status =
+      response.status;
+
+    error.details =
+      data;
 
     throw error;
   }
@@ -181,174 +157,455 @@ async function ghlFetch(path, options = {}) {
   return data;
 }
 
-async function getServiceBookings(date) {
-  const startLocal = `${date}T00:00:00`;
-  const endLocal = `${date}T23:59:59`;
+/*
+|--------------------------------------------------------------------------
+| Timezone Helpers
+|--------------------------------------------------------------------------
+*/
 
-  const startMs = convertLocalTimeToTimestamp(
-    startLocal,
-    CONFIG.timezone
+function localTimeToEpoch(
+  localDateTime,
+  timezone
+) {
+  const temporaryUTC =
+    new Date(
+      `${localDateTime}Z`
+    );
+
+  const formatter =
+    new Intl.DateTimeFormat(
+      "en-US",
+      {
+        timeZone:
+          timezone,
+
+        year:
+          "numeric",
+
+        month:
+          "2-digit",
+
+        day:
+          "2-digit",
+
+        hour:
+          "2-digit",
+
+        minute:
+          "2-digit",
+
+        second:
+          "2-digit",
+
+        hour12:
+          false
+      }
+    );
+
+  const parts =
+    formatter.formatToParts(
+      temporaryUTC
+    );
+
+  const values = {};
+
+  for (const part of parts) {
+    if (
+      part.type !==
+      "literal"
+    ) {
+      values[
+        part.type
+      ] =
+        part.value;
+    }
+  }
+
+  const formattedAsUTC =
+    Date.UTC(
+      Number(
+        values.year
+      ),
+      Number(
+        values.month
+      ) - 1,
+      Number(
+        values.day
+      ),
+      Number(
+        values.hour
+      ),
+      Number(
+        values.minute
+      ),
+      Number(
+        values.second
+      )
+    );
+
+  const offset =
+    formattedAsUTC -
+    temporaryUTC.getTime();
+
+  return (
+    temporaryUTC.getTime() -
+    offset
+  );
+}
+
+function addMinutes(
+  localDateTime,
+  minutes
+) {
+  const value =
+    new Date(
+      `${localDateTime}Z`
+    );
+
+  value.setUTCMinutes(
+    value.getUTCMinutes() +
+    minutes
   );
 
-  const endMs = convertLocalTimeToTimestamp(
-    endLocal,
-    CONFIG.timezone
+  return value
+    .toISOString()
+    .slice(0, 19);
+}
+
+function buildLocalDateTime(
+  date,
+  hour,
+  minute
+) {
+  return (
+    `${date}T` +
+    `${String(hour).padStart(2, "0")}:` +
+    `${String(minute).padStart(2, "0")}:00`
   );
+}
 
-  const params = new URLSearchParams({
-    locationId: CONFIG.locationId,
-    startTime: String(startMs),
-    endTime: String(endMs),
-    timezone: CONFIG.timezone,
-    serviceLocationId: CONFIG.serviceLocationId
-  });
+/*
+|--------------------------------------------------------------------------
+| Get Service Bookings
+|--------------------------------------------------------------------------
+*/
 
-  const data = await ghlFetch(
-    `/calendars/services/bookings?${params}`
-  );
+async function getBookingsForDate(
+  date
+) {
+  const dayStart =
+    `${date}T00:00:00`;
 
-  return Array.isArray(data.bookings)
+  const dayEnd =
+    `${date}T23:59:59`;
+
+  const startMs =
+    localTimeToEpoch(
+      dayStart,
+      CONFIG.timezone
+    );
+
+  const endMs =
+    localTimeToEpoch(
+      dayEnd,
+      CONFIG.timezone
+    );
+
+  const params =
+    new URLSearchParams({
+      locationId:
+        CONFIG.locationId,
+
+      startTime:
+        String(startMs),
+
+      endTime:
+        String(endMs),
+
+      timezone:
+        CONFIG.timezone,
+
+      serviceLocationId:
+        CONFIG.serviceLocationId
+    });
+
+  const data =
+    await ghlFetch(
+      `/calendars/services/bookings?${params.toString()}`
+    );
+
+  return Array.isArray(
+    data.bookings
+  )
     ? data.bookings
     : [];
 }
 
-function bookingUsesService(booking) {
-  /*
-    Some GHL list responses may not expose full
-    service objects depending on API response shape.
+/*
+|--------------------------------------------------------------------------
+| Booking Validation
+|--------------------------------------------------------------------------
+*/
 
-    If services are available, filter by service.
-    Otherwise the serviceLocation/date filter is
-    used for this POC.
-  */
-
-  if (!Array.isArray(booking.services)) {
-    return true;
+function isActiveBooking(
+  booking
+) {
+  if (
+    booking.deleted === true
+  ) {
+    return false;
   }
 
-  return booking.services.some(
-    service =>
-      service.id === CONFIG.serviceId ||
-      service.serviceId === CONFIG.serviceId
-  );
-}
-
-function activeBookings(bookings) {
-  return bookings.filter(booking => {
-    if (booking.deleted === true) return false;
-
-    const status = String(
+  const status =
+    String(
       booking.status || ""
     ).toLowerCase();
 
-    if (status === "cancelled" || status === "canceled") {
-      return false;
-    }
+  const excludedStatuses = [
+    "cancelled",
+    "canceled",
+    "invalid"
+  ];
 
-    return bookingUsesService(booking);
-  });
+  return !excludedStatuses.includes(
+    status
+  );
 }
 
-function calculateSlotUsage(bookings, startTime, endTime) {
-  const slotStart = convertLocalTimeToTimestamp(
-    startTime,
-    CONFIG.timezone
-  );
+/*
+|--------------------------------------------------------------------------
+| RESOURCE CHECK
+|--------------------------------------------------------------------------
+|
+| This is the important change.
+|
+| We do NOT check only the Service ID.
+|
+| We check whether any service inside the booking uses:
+|
+| serviceResources[].id === CONFIG.resourceId
+|
+|--------------------------------------------------------------------------
+*/
 
-  const slotEnd = convertLocalTimeToTimestamp(
-    endTime,
-    CONFIG.timezone
-  );
+function bookingUsesResource(
+  booking
+) {
+  if (
+    !Array.isArray(
+      booking.services
+    )
+  ) {
+    return false;
+  }
 
-  return activeBookings(bookings).filter(booking => {
-    const bookingStart = Date.parse(booking.startTime);
-    const bookingEnd = Date.parse(booking.endTime);
+  return booking.services.some(
+    service => {
 
-    if (
-      Number.isNaN(bookingStart) ||
-      Number.isNaN(bookingEnd)
-    ) {
-      return false;
+      if (
+        !Array.isArray(
+          service.serviceResources
+        )
+      ) {
+        return false;
+      }
+
+      return (
+        service.serviceResources.some(
+          resource =>
+            resource.id ===
+            CONFIG.resourceId
+        )
+      );
     }
+  );
+}
 
-    return overlaps(
-      bookingStart,
-      bookingEnd,
-      slotStart,
-      slotEnd
+/*
+|--------------------------------------------------------------------------
+| Time Overlap
+|--------------------------------------------------------------------------
+*/
+
+function bookingOverlapsSlot(
+  booking,
+  slotStartMs,
+  slotEndMs
+) {
+  const bookingStart =
+    Date.parse(
+      booking.startTime
     );
-  }).length;
+
+  const bookingEnd =
+    Date.parse(
+      booking.endTime
+    );
+
+  if (
+    Number.isNaN(
+      bookingStart
+    ) ||
+    Number.isNaN(
+      bookingEnd
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    bookingStart <
+      slotEndMs &&
+    bookingEnd >
+      slotStartMs
+  );
 }
 
-function generateSlots(date, bookings) {
+/*
+|--------------------------------------------------------------------------
+| Calculate Resource Usage
+|--------------------------------------------------------------------------
+*/
+
+function calculateResourceUsage(
+  bookings,
+  slotStart,
+  slotEnd
+) {
+  const slotStartMs =
+    localTimeToEpoch(
+      slotStart,
+      CONFIG.timezone
+    );
+
+  const slotEndMs =
+    localTimeToEpoch(
+      slotEnd,
+      CONFIG.timezone
+    );
+
+  const matchingBookings =
+    bookings.filter(
+      booking =>
+        isActiveBooking(
+          booking
+        ) &&
+        bookingUsesResource(
+          booking
+        ) &&
+        bookingOverlapsSlot(
+          booking,
+          slotStartMs,
+          slotEndMs
+        )
+    );
+
+  return {
+    used:
+      matchingBookings.length,
+
+    bookingIds:
+      matchingBookings.map(
+        booking =>
+          booking.bookingId
+      )
+  };
+}
+
+/*
+|--------------------------------------------------------------------------
+| Generate Slots
+|--------------------------------------------------------------------------
+*/
+
+function generateSlots(
+  date,
+  bookings
+) {
   const slots = [];
 
-  let hour = CONFIG.openHour;
+  let hour =
+    CONFIG.openHour;
+
   let minute = 0;
 
   while (
-    hour < CONFIG.closeHour ||
-    (hour === CONFIG.closeHour && minute === 0)
+    hour <
+    CONFIG.closeHour
   ) {
-    const start = toDateTime(
-      date,
-      hour,
-      minute
-    );
+    const startTime =
+      buildLocalDateTime(
+        date,
+        hour,
+        minute
+      );
 
-    const end = addMinutes(
-      start,
-      CONFIG.durationMinutes
-    );
+    const endTime =
+      addMinutes(
+        startTime,
+        CONFIG.durationMinutes
+      );
 
-    const endHour = Number(
-      end.slice(11, 13)
-    );
+    const usage =
+      calculateResourceUsage(
+        bookings,
+        startTime,
+        endTime
+      );
 
-    const endMinute = Number(
-      end.slice(14, 16)
-    );
-
-    if (
-      endHour > CONFIG.closeHour ||
-      (
-        endHour === CONFIG.closeHour &&
-        endMinute > 0
-      )
-    ) {
-      break;
-    }
-
-    const booked = calculateSlotUsage(
-      bookings,
-      start,
-      end
-    );
-
-    const remaining = Math.max(
-      CONFIG.capacity - booked,
-      0
-    );
+    const remaining =
+      Math.max(
+        CONFIG.resourceCapacity -
+          usage.used,
+        0
+      );
 
     slots.push({
-      startTime: start,
-      endTime: end,
-      capacity: CONFIG.capacity,
-      booked,
+      startTime,
+      endTime,
+
+      resourceId:
+        CONFIG.resourceId,
+
+      capacity:
+        CONFIG.resourceCapacity,
+
+      used:
+        usage.used,
+
       remaining,
-      available: remaining > 0
+
+      available:
+        remaining > 0,
+
+      bookingIds:
+        usage.bookingIds
     });
 
-    minute += CONFIG.slotIntervalMinutes;
+    minute +=
+      CONFIG.slotIntervalMinutes;
 
-    while (minute >= 60) {
-      hour += 1;
-      minute -= 60;
+    if (
+      minute >= 60
+    ) {
+      hour +=
+        Math.floor(
+          minute / 60
+        );
+
+      minute =
+        minute % 60;
     }
   }
 
   return slots;
 }
+
+/*
+|--------------------------------------------------------------------------
+| Contact Upsert
+|--------------------------------------------------------------------------
+*/
 
 async function upsertContact({
   firstName,
@@ -357,57 +614,83 @@ async function upsertContact({
   phone
 }) {
   const body = {
-    locationId: CONFIG.locationId,
+    locationId:
+      CONFIG.locationId,
+
     firstName,
     lastName,
     email,
     phone,
-    source: "Custom Capacity Booking Funnel"
+
+    source:
+      "Custom Capacity Booking Funnel"
   };
 
-  const data = await ghlFetch(
-    "/contacts/upsert",
-    {
-      method: "POST",
-      body: JSON.stringify(body)
-    }
-  );
+  const data =
+    await ghlFetch(
+      "/contacts/upsert",
+      {
+        method:
+          "POST",
+
+        body:
+          JSON.stringify(
+            body
+          )
+      }
+    );
 
   const contact =
     data.contact ||
     data;
 
-  if (!contact?.id) {
+  if (
+    !contact?.id
+  ) {
     throw new Error(
-      "GHL did not return a contact ID"
+      "No contact ID returned from GHL"
     );
   }
 
   return contact;
 }
 
-async function createServiceBooking({
+/*
+|--------------------------------------------------------------------------
+| Create Service Booking
+|--------------------------------------------------------------------------
+*/
+
+async function createBooking({
   contactId,
   startTime,
   endTime
 }) {
-  const params = new URLSearchParams({
-    overrideAvailability: "true"
-  });
+  const params =
+    new URLSearchParams({
+      overrideAvailability:
+        "true"
+    });
 
   const body = {
-    locationId: CONFIG.locationId,
+    locationId:
+      CONFIG.locationId,
+
     contactId,
 
     startTime,
     endTime,
 
-    timezone: CONFIG.timezone,
+    timezone:
+      CONFIG.timezone,
 
     services: [
       {
-        id: CONFIG.serviceId,
-        staffId: CONFIG.staffId
+        id:
+          CONFIG.serviceId,
+
+        staffId:
+          CONFIG.staffId
       }
     ],
 
@@ -422,26 +705,44 @@ async function createServiceBooking({
   };
 
   return ghlFetch(
-    `/calendars/services/bookings?${params}`,
+    `/calendars/services/bookings?${params.toString()}`,
     {
-      method: "POST",
-      body: JSON.stringify(body)
+      method:
+        "POST",
+
+      body:
+        JSON.stringify(
+          body
+        )
     }
   );
 }
 
 /*
 |--------------------------------------------------------------------------
-| Health Check
+| Health
 |--------------------------------------------------------------------------
 */
 
-app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    service: "GHL Capacity Booking API"
-  });
-});
+app.get(
+  "/",
+  (req, res) => {
+
+    res.json({
+      success:
+        true,
+
+      service:
+        "GHL Resource Capacity Booking API",
+
+      resourceId:
+        CONFIG.resourceId,
+
+      capacity:
+        CONFIG.resourceCapacity
+    });
+  }
+);
 
 /*
 |--------------------------------------------------------------------------
@@ -449,188 +750,315 @@ app.get("/", (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.get("/api/availability", async (req, res) => {
-  try {
-    const { date } = req.query;
+app.get(
+  "/api/availability",
+  async (
+    req,
+    res
+  ) => {
 
-    if (
-      !date ||
-      !/^\d{4}-\d{2}-\d{2}$/.test(date)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "date is required in YYYY-MM-DD format"
+    try {
+      const {
+        date
+      } =
+        req.query;
+
+      if (
+        !date ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(
+          date
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            message:
+              "date is required in YYYY-MM-DD format"
+          });
+      }
+
+      const bookings =
+        await getBookingsForDate(
+          date
+        );
+
+      const slots =
+        generateSlots(
+          date,
+          bookings
+        );
+
+      return res.json({
+        success:
+          true,
+
+        date,
+
+        timezone:
+          CONFIG.timezone,
+
+        resource: {
+          id:
+            CONFIG.resourceId,
+
+          capacity:
+            CONFIG.resourceCapacity
+        },
+
+        totalBookingsReturned:
+          bookings.length,
+
+        slots
       });
-    }
 
-    const bookings =
-      await getServiceBookings(date);
-
-    const slots =
-      generateSlots(date, bookings);
-
-    return res.json({
-      success: true,
-      serviceId: CONFIG.serviceId,
-      date,
-      timezone: CONFIG.timezone,
-      capacity: CONFIG.capacity,
-      durationMinutes:
-        CONFIG.durationMinutes,
-      slots
-    });
-  } catch (error) {
-    console.error(
-      "Availability error:",
+    } catch (
       error
-    );
+    ) {
 
-    return res
-      .status(error.status || 500)
-      .json({
-        success: false,
-        message: error.message,
-        details:
-          process.env.NODE_ENV === "production"
-            ? undefined
-            : error.details
-      });
+      console.error(
+        "Availability error",
+        error
+      );
+
+      return res
+        .status(
+          error.status ||
+          500
+        )
+        .json({
+          success:
+            false,
+
+          message:
+            error.message
+        });
+    }
   }
-});
+);
 
 /*
 |--------------------------------------------------------------------------
-| Create Booking
+| Book
 |--------------------------------------------------------------------------
 */
 
-app.post("/api/book", async (req, res) => {
-  try {
-    const {
-      firstName,
-      lastName,
-      email,
-      phone,
-      startTime
-    } = req.body;
+app.post(
+  "/api/book",
+  async (
+    req,
+    res
+  ) => {
 
-    if (
-      !firstName ||
-      !email ||
-      !startTime
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "firstName, email and startTime are required"
-      });
-    }
-
-    if (
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(
-        startTime
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Invalid startTime format"
-      });
-    }
-
-    const date =
-      startTime.slice(0, 10);
-
-    const endTime =
-      addMinutes(
-        startTime,
-        CONFIG.durationMinutes
-      );
-
-    /*
-      IMPORTANT:
-      Re-check availability immediately before
-      creating the booking.
-    */
-
-    const bookings =
-      await getServiceBookings(date);
-
-    const booked =
-      calculateSlotUsage(
-        bookings,
-        startTime,
-        endTime
-      );
-
-    const remaining =
-      CONFIG.capacity - booked;
-
-    if (remaining <= 0) {
-      return res.status(409).json({
-        success: false,
-        code: "SLOT_FULL",
-        message:
-          "This time slot is now full. Please choose another time."
-      });
-    }
-
-    /*
-      Create or update the GHL contact.
-    */
-
-    const contact =
-      await upsertContact({
+    try {
+      const {
         firstName,
         lastName,
         email,
-        phone
-      });
+        phone,
+        startTime
+      } =
+        req.body;
 
-    /*
-      Create overlapping Service Booking.
-    */
+      if (
+        !firstName ||
+        !email ||
+        !startTime
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
 
-    const booking =
-      await createServiceBooking({
-        contactId: contact.id,
-        startTime,
-        endTime
-      });
+            message:
+              "firstName, email and startTime are required"
+          });
+      }
 
-    return res.status(201).json({
-      success: true,
-      message:
-        "Booking created successfully",
-      contactId: contact.id,
-      bookingId:
-        booking.bookingId ||
-        booking.id ||
-        booking?.booking?.bookingId,
-      booking
-    });
-  } catch (error) {
-    console.error(
-      "Booking error:",
+      const date =
+        startTime.slice(
+          0,
+          10
+        );
+
+      const endTime =
+        addMinutes(
+          startTime,
+          CONFIG.durationMinutes
+        );
+
+      /*
+      |--------------------------------------------------------------------------
+      | Re-check resource capacity
+      |--------------------------------------------------------------------------
+      */
+
+      const bookings =
+        await getBookingsForDate(
+          date
+        );
+
+      const usage =
+        calculateResourceUsage(
+          bookings,
+          startTime,
+          endTime
+        );
+
+      const remaining =
+        CONFIG.resourceCapacity -
+        usage.used;
+
+      if (
+        remaining <= 0
+      ) {
+        return res
+          .status(409)
+          .json({
+            success:
+              false,
+
+            code:
+              "RESOURCE_FULL",
+
+            message:
+              "This time slot is fully booked. Please choose another time.",
+
+            resourceId:
+              CONFIG.resourceId,
+
+            capacity:
+              CONFIG.resourceCapacity,
+
+            used:
+              usage.used,
+
+            remaining:
+              0
+          });
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | Create/find contact
+      |--------------------------------------------------------------------------
+      */
+
+      const contact =
+        await upsertContact({
+          firstName,
+          lastName,
+          email,
+          phone
+        });
+
+      /*
+      |--------------------------------------------------------------------------
+      | Create GHL booking
+      |--------------------------------------------------------------------------
+      */
+
+      const booking =
+        await createBooking({
+          contactId:
+            contact.id,
+
+          startTime,
+          endTime
+        });
+
+      /*
+      |--------------------------------------------------------------------------
+      | Optional verification
+      |--------------------------------------------------------------------------
+      |
+      | Return what capacity should now be after this booking.
+      |
+      */
+
+      return res
+        .status(201)
+        .json({
+          success:
+            true,
+
+          message:
+            "Booking created successfully",
+
+          contactId:
+            contact.id,
+
+          bookingId:
+            booking.bookingId ||
+            booking.id ||
+            booking?.booking?.bookingId,
+
+          resource: {
+            id:
+              CONFIG.resourceId,
+
+            capacity:
+              CONFIG.resourceCapacity,
+
+            usedBeforeBooking:
+              usage.used,
+
+            expectedUsedAfterBooking:
+              usage.used + 1,
+
+            expectedRemainingAfterBooking:
+              Math.max(
+                CONFIG.resourceCapacity -
+                (
+                  usage.used +
+                  1
+                ),
+                0
+              )
+          },
+
+          booking
+        });
+
+    } catch (
       error
-    );
+    ) {
 
-    return res
-      .status(error.status || 500)
-      .json({
-        success: false,
-        message: error.message,
-        details:
-          process.env.NODE_ENV === "production"
-            ? undefined
-            : error.details
-      });
+      console.error(
+        "Booking error",
+        error
+      );
+
+      return res
+        .status(
+          error.status ||
+          500
+        )
+        .json({
+          success:
+            false,
+
+          message:
+            error.message,
+
+          details:
+            process.env.NODE_ENV ===
+            "production"
+              ? undefined
+              : error.details
+        });
+    }
   }
-});
+);
 
-app.listen(PORT, () => {
-  console.log(
-    `GHL Capacity Booking API running on port ${PORT}`
-  );
-});
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      `Server running on port ${PORT}`
+    );
+  }
+);
