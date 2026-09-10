@@ -62,15 +62,19 @@ const CONFIG = {
     ),
 
   openHour:
-    Number(process.env.OPEN_HOUR || 5),
+    Number(
+      process.env.OPEN_HOUR || 5
+    ),
 
   closeHour:
-    Number(process.env.CLOSE_HOUR || 17)
+    Number(
+      process.env.CLOSE_HOUR || 17
+    )
 };
 
 /*
 |--------------------------------------------------------------------------
-| GHL Headers
+| GHL HEADERS
 |--------------------------------------------------------------------------
 */
 
@@ -86,7 +90,7 @@ function ghlHeaders() {
 
 /*
 |--------------------------------------------------------------------------
-| GHL Fetch Helper
+| GHL FETCH
 |--------------------------------------------------------------------------
 */
 
@@ -100,21 +104,22 @@ async function ghlFetch(
     );
   }
 
-  const response = await fetch(
-    `${GHL_BASE_URL}${path}`,
-    {
-      ...options,
-      headers: {
-        ...ghlHeaders(),
-        ...(options.headers || {})
+  const response =
+    await fetch(
+      `${GHL_BASE_URL}${path}`,
+      {
+        ...options,
+        headers: {
+          ...ghlHeaders(),
+          ...(options.headers || {})
+        }
       }
-    }
-  );
+    );
 
   const raw =
     await response.text();
 
-  let data;
+  let data = {};
 
   try {
     data =
@@ -129,11 +134,10 @@ async function ghlFetch(
 
   if (!response.ok) {
     console.error(
-      "GHL API Error",
+      "GHL API Error:",
       {
         path,
-        status:
-          response.status,
+        status: response.status,
         data
       }
     );
@@ -159,7 +163,7 @@ async function ghlFetch(
 
 /*
 |--------------------------------------------------------------------------
-| Timezone Helpers
+| TIMEZONE CONVERSION
 |--------------------------------------------------------------------------
 */
 
@@ -221,30 +225,18 @@ function localTimeToEpoch(
     }
   }
 
-  const formattedAsUTC =
+  const convertedUTC =
     Date.UTC(
-      Number(
-        values.year
-      ),
-      Number(
-        values.month
-      ) - 1,
-      Number(
-        values.day
-      ),
-      Number(
-        values.hour
-      ),
-      Number(
-        values.minute
-      ),
-      Number(
-        values.second
-      )
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day),
+      Number(values.hour),
+      Number(values.minute),
+      Number(values.second)
     );
 
   const offset =
-    formattedAsUTC -
+    convertedUTC -
     temporaryUTC.getTime();
 
   return (
@@ -252,6 +244,12 @@ function localTimeToEpoch(
     offset
   );
 }
+
+/*
+|--------------------------------------------------------------------------
+| ADD MINUTES
+|--------------------------------------------------------------------------
+*/
 
 function addMinutes(
   localDateTime,
@@ -272,6 +270,12 @@ function addMinutes(
     .slice(0, 19);
 }
 
+/*
+|--------------------------------------------------------------------------
+| BUILD LOCAL DATETIME
+|--------------------------------------------------------------------------
+*/
+
 function buildLocalDateTime(
   date,
   hour,
@@ -286,7 +290,7 @@ function buildLocalDateTime(
 
 /*
 |--------------------------------------------------------------------------
-| Get Service Bookings
+| GET GHL BOOKINGS FOR DATE
 |--------------------------------------------------------------------------
 */
 
@@ -343,7 +347,7 @@ async function getBookingsForDate(
 
 /*
 |--------------------------------------------------------------------------
-| Booking Validation
+| CHECK ACTIVE BOOKING
 |--------------------------------------------------------------------------
 */
 
@@ -374,17 +378,7 @@ function isActiveBooking(
 
 /*
 |--------------------------------------------------------------------------
-| RESOURCE CHECK
-|--------------------------------------------------------------------------
-|
-| This is the important change.
-|
-| We do NOT check only the Service ID.
-|
-| We check whether any service inside the booking uses:
-|
-| serviceResources[].id === CONFIG.resourceId
-|
+| CHECK IF BOOKING USES OUR RESOURCE
 |--------------------------------------------------------------------------
 */
 
@@ -401,7 +395,6 @@ function bookingUsesResource(
 
   return booking.services.some(
     service => {
-
       if (
         !Array.isArray(
           service.serviceResources
@@ -423,7 +416,7 @@ function bookingUsesResource(
 
 /*
 |--------------------------------------------------------------------------
-| Time Overlap
+| CHECK TIME OVERLAP
 |--------------------------------------------------------------------------
 */
 
@@ -463,7 +456,7 @@ function bookingOverlapsSlot(
 
 /*
 |--------------------------------------------------------------------------
-| Calculate Resource Usage
+| CALCULATE RESOURCE USAGE
 |--------------------------------------------------------------------------
 */
 
@@ -484,7 +477,7 @@ function calculateResourceUsage(
       CONFIG.timezone
     );
 
-  const matchingBookings =
+  const matches =
     bookings.filter(
       booking =>
         isActiveBooking(
@@ -502,10 +495,10 @@ function calculateResourceUsage(
 
   return {
     used:
-      matchingBookings.length,
+      matches.length,
 
     bookingIds:
-      matchingBookings.map(
+      matches.map(
         booking =>
           booking.bookingId
       )
@@ -514,7 +507,7 @@ function calculateResourceUsage(
 
 /*
 |--------------------------------------------------------------------------
-| Generate Slots
+| GENERATE AVAILABLE SLOTS
 |--------------------------------------------------------------------------
 */
 
@@ -564,22 +557,13 @@ function generateSlots(
       startTime,
       endTime,
 
-      resourceId:
-        CONFIG.resourceId,
-
-      capacity:
-        CONFIG.resourceCapacity,
-
-      used:
-        usage.used,
-
-      remaining,
+      /*
+      Only the frontend-relevant
+      availability result is exposed.
+      */
 
       available:
-        remaining > 0,
-
-      bookingIds:
-        usage.bookingIds
+        remaining > 0
     });
 
     minute +=
@@ -603,7 +587,7 @@ function generateSlots(
 
 /*
 |--------------------------------------------------------------------------
-| Contact Upsert
+| UPSERT CONTACT
 |--------------------------------------------------------------------------
 */
 
@@ -648,7 +632,7 @@ async function upsertContact({
     !contact?.id
   ) {
     throw new Error(
-      "No contact ID returned from GHL"
+      "No contact ID returned from GHL."
     );
   }
 
@@ -657,11 +641,11 @@ async function upsertContact({
 
 /*
 |--------------------------------------------------------------------------
-| Create Service Booking
+| CREATE SERVICE BOOKING
 |--------------------------------------------------------------------------
 */
 
-async function createBooking({
+async function createServiceBooking({
   contactId,
   startTime,
   endTime
@@ -720,33 +704,24 @@ async function createBooking({
 
 /*
 |--------------------------------------------------------------------------
-| Health
+| HEALTH CHECK
 |--------------------------------------------------------------------------
 */
 
 app.get(
   "/",
   (req, res) => {
-
     res.json({
-      success:
-        true,
-
-      service:
-        "GHL Resource Capacity Booking API",
-
-      resourceId:
-        CONFIG.resourceId,
-
-      capacity:
-        CONFIG.resourceCapacity
+      success: true,
+      message:
+        "GHL Capacity Booking API is running"
     });
   }
 );
 
 /*
 |--------------------------------------------------------------------------
-| Availability
+| AVAILABILITY
 |--------------------------------------------------------------------------
 */
 
@@ -756,7 +731,6 @@ app.get(
     req,
     res
   ) => {
-
     try {
       const {
         date
@@ -776,7 +750,7 @@ app.get(
               false,
 
             message:
-              "date is required in YYYY-MM-DD format"
+              "Date must be YYYY-MM-DD"
           });
       }
 
@@ -800,26 +774,14 @@ app.get(
         timezone:
           CONFIG.timezone,
 
-        resource: {
-          id:
-            CONFIG.resourceId,
-
-          capacity:
-            CONFIG.resourceCapacity
-        },
-
-        totalBookingsReturned:
-          bookings.length,
-
         slots
       });
 
     } catch (
       error
     ) {
-
       console.error(
-        "Availability error",
+        "Availability error:",
         error
       );
 
@@ -841,7 +803,7 @@ app.get(
 
 /*
 |--------------------------------------------------------------------------
-| Book
+| CREATE BOOKING
 |--------------------------------------------------------------------------
 */
 
@@ -851,7 +813,6 @@ app.post(
     req,
     res
   ) => {
-
     try {
       const {
         firstName,
@@ -874,7 +835,23 @@ app.post(
               false,
 
             message:
-              "firstName, email and startTime are required"
+              "First name, email and time are required."
+          });
+      }
+
+      if (
+        !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(
+          startTime
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            message:
+              "Invalid booking time."
           });
       }
 
@@ -892,7 +869,8 @@ app.post(
 
       /*
       |--------------------------------------------------------------------------
-      | Re-check resource capacity
+      | IMPORTANT:
+      | Re-check capacity immediately before booking
       |--------------------------------------------------------------------------
       */
 
@@ -922,28 +900,16 @@ app.post(
               false,
 
             code:
-              "RESOURCE_FULL",
+              "SLOT_FULL",
 
             message:
-              "This time slot is fully booked. Please choose another time.",
-
-            resourceId:
-              CONFIG.resourceId,
-
-            capacity:
-              CONFIG.resourceCapacity,
-
-            used:
-              usage.used,
-
-            remaining:
-              0
+              "This time is no longer available. Please choose another time."
           });
       }
 
       /*
       |--------------------------------------------------------------------------
-      | Create/find contact
+      | CONTACT
       |--------------------------------------------------------------------------
       */
 
@@ -957,27 +923,18 @@ app.post(
 
       /*
       |--------------------------------------------------------------------------
-      | Create GHL booking
+      | CREATE BOOKING
       |--------------------------------------------------------------------------
       */
 
       const booking =
-        await createBooking({
+        await createServiceBooking({
           contactId:
             contact.id,
 
           startTime,
           endTime
         });
-
-      /*
-      |--------------------------------------------------------------------------
-      | Optional verification
-      |--------------------------------------------------------------------------
-      |
-      | Return what capacity should now be after this booking.
-      |
-      */
 
       return res
         .status(201)
@@ -986,49 +943,19 @@ app.post(
             true,
 
           message:
-            "Booking created successfully",
-
-          contactId:
-            contact.id,
+            "Booking confirmed.",
 
           bookingId:
             booking.bookingId ||
             booking.id ||
-            booking?.booking?.bookingId,
-
-          resource: {
-            id:
-              CONFIG.resourceId,
-
-            capacity:
-              CONFIG.resourceCapacity,
-
-            usedBeforeBooking:
-              usage.used,
-
-            expectedUsedAfterBooking:
-              usage.used + 1,
-
-            expectedRemainingAfterBooking:
-              Math.max(
-                CONFIG.resourceCapacity -
-                (
-                  usage.used +
-                  1
-                ),
-                0
-              )
-          },
-
-          booking
+            booking?.booking?.bookingId
         });
 
     } catch (
       error
     ) {
-
       console.error(
-        "Booking error",
+        "Booking error:",
         error
       );
 
@@ -1042,23 +969,23 @@ app.post(
             false,
 
           message:
-            error.message,
-
-          details:
-            process.env.NODE_ENV ===
-            "production"
-              ? undefined
-              : error.details
+            error.message
         });
     }
   }
 );
 
+/*
+|--------------------------------------------------------------------------
+| START SERVER
+|--------------------------------------------------------------------------
+*/
+
 app.listen(
   PORT,
   () => {
     console.log(
-      `Server running on port ${PORT}`
+      `GHL Capacity API running on port ${PORT}`
     );
   }
 );
